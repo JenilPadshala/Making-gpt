@@ -13,6 +13,7 @@ device = 'mps' if torch.backends.mps.is_available() else 'cpu'
 eval_iters = 200
 new_tokens = 500
 n_embd = 32
+n_layer = 4
 # -------------------------------------
 
 torch.manual_seed(1337)
@@ -111,10 +112,12 @@ class Block(nn.Module):
     head_size = n_embd // n_head
     self.sa = MultiHeadAttention(n_head, head_size)
     self.ffwd = FeedForward(n_embd)
-  
+    self.ln1 = nn.LayerNorm(n_embd)
+    self.ln2 = nn.LayerNorm(n_embd)
+
   def forward(self, x):
-    x = x+self.sa(x)
-    x = x+ self.ffwd(x)
+    x = x+self.sa(self.ln1(x))
+    x = x+ self.ffwd(self.ln2(x))
     return x
 
 
@@ -127,11 +130,8 @@ class BigramLanguageModel(nn.Module):
     # each token directly reads off the logits for the next token from a lookup table
     self.token_embedding_table = nn.Embedding(vocab_size, n_embd)
     self.position_embedding_table = nn.Embedding(block_size, n_embd)
-    self.blocks = nn.Sequential(
-      Block(n_embd, n_head=4),
-      Block(n_embd, n_head=4),
-      Block(n_embd, n_head=4),
-    )
+    self.blocks = nn.Sequential(*[Block(n_embd, n_head=4) for _ in range(n_layer)])
+    self.ln_f = nn.LayerNorm(n_embd)
     self.lm_head = nn.Linear(n_embd, vocab_size)
   
   def forward(self, idx, targets=None):
@@ -141,6 +141,7 @@ class BigramLanguageModel(nn.Module):
     pos_emb = self.position_embedding_table(torch.arange(T, device=device)) # (T,C)
     x = tok_emb + pos_emb # (B,T,C)  ---- pos_emb is aligned with tok_emb and broadcasted across the batch dimension to add to tok_emb
     x = self.blocks(x)
+    x = self.ln_f(x)
     logits = self.lm_head(x) #(B,T,vocab_size)
     if targets is None:
       loss = None
